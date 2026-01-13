@@ -1,40 +1,182 @@
-<div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="logo/DuckDB_Logo-horizontal.svg">
-    <source media="(prefers-color-scheme: dark)" srcset="logo/DuckDB_Logo-horizontal-dark-mode.svg">
-    <img alt="DuckDB logo" src="logo/DuckDB_Logo-horizontal.svg" height="100">
-  </picture>
-</div>
-<br>
+# AliSQL with DuckDB Engine
 
-<p align="center">
-  <a href="https://github.com/duckdb/duckdb/actions"><img src="https://github.com/duckdb/duckdb/actions/workflows/Main.yml/badge.svg?branch=main" alt="Github Actions Badge"></a>
-  <a href="https://discord.gg/tcvwpjfnZx"><img src="https://shields.io/discord/909674491309850675" alt="discord" /></a>
-  <a href="https://github.com/duckdb/duckdb/releases/"><img src="https://img.shields.io/github/v/release/duckdb/duckdb?color=brightgreen&display_name=tag&logo=duckdb&logoColor=white" alt="Latest Release"></a>
-</p>
+## Overview
 
-## DuckDB
+This repository contains **AliSQL** (Alibaba's MySQL fork) integrated with **DuckDB** as an analytical engine. This integration combines the OLTP capabilities of MySQL with the powerful OLAP features of DuckDB, providing a hybrid database solution for both transactional and analytical workloads.
 
-DuckDB is a high-performance analytical database system. It is designed to be fast, reliable, portable, and easy to use. DuckDB provides a rich SQL dialect, with support far beyond basic SQL. DuckDB supports arbitrary and nested correlated subqueries, window functions, collations, complex types (arrays, structs, maps), and [several extensions designed to make SQL easier to use](https://duckdb.org/docs/stable/sql/dialect/friendly_sql.html).
+## Version Information
 
-DuckDB is available as a [standalone CLI application](https://duckdb.org/docs/stable/clients/cli/overview) and has clients for [Python](https://duckdb.org/docs/stable/clients/python/overview), [R](https://duckdb.org/docs/stable/clients/r), [Java](https://duckdb.org/docs/stable/clients/java), [Wasm](https://duckdb.org/docs/stable/clients/wasm/overview), etc., with deep integrations with packages such as [pandas](https://duckdb.org/docs/guides/python/sql_on_pandas) and [dplyr](https://duckdb.org/docs/stable/clients/r#duckplyr-dplyr-api).
+- **AliSQL Version**: Based on upstream MySQL 8.0.44
+- **DuckDB Engine**: Integrated as a storage/analytical engine within AliSQL
 
-For more information on using DuckDB, please refer to the [DuckDB documentation](https://duckdb.org/docs/stable/).
+## What is AliSQL?
 
-## Installation
+AliSQL is Alibaba's MySQL branch, forked from official MySQL and used extensively in Alibaba Group's production environment. It includes various performance optimizations, stability improvements, and features tailored for large-scale applications.
 
-If you want to install DuckDB, please see [our installation page](https://duckdb.org/docs/installation/) for instructions.
+## What is DuckDB?
 
-## Data Import
+DuckDB is an open-source embedded analytical database system (OLAP) designed for data analysis workloads. DuckDB is rapidly becoming a popular choice in data science, BI tools, and embedded analytics scenarios due to its key characteristics:
 
-For CSV files and Parquet files, data import is as simple as referencing the file in the FROM clause:
+- **Exceptional Query Performance**: Single-node DuckDB performance not only far exceeds InnoDB, but even surpasses ClickHouse and SelectDB
+- **Excellent Compression**: DuckDB uses columnar storage and automatically selects appropriate compression algorithms based on data types, achieving very high compression ratios
+- **Embedded Design**: DuckDB is an embedded database system, naturally suitable for integration into MySQL
+- **Plugin Architecture**: DuckDB uses a plugin-based design, making it very convenient for third-party development and feature extensions
+- **Friendly License**: DuckDB's license allows any form of use, including commercial purposes
 
-```sql
-SELECT * FROM 'myfile.csv';
-SELECT * FROM 'myfile.parquet';
+## Why Integrate DuckDB with AliSQL?
+
+MySQL has long lacked an analytical query engine. While InnoDB is naturally designed for OLTP and excels in TP scenarios, its query efficiency is very low for analytical workloads. This integration enables:
+
+- **Hybrid Workloads**: Run both OLTP (MySQL/InnoDB) and OLAP (DuckDB) queries in a single database system
+- **High-Performance Analytics**: Analytical query performance improves up to **200x** compared to InnoDB
+- **Storage Cost Reduction**: DuckDB read replicas typically use only **20%** of the main instance's storage space due to high compression
+- **100% MySQL Syntax Compatibility**: No learning curve - DuckDB is integrated as a storage engine, so users continue using MySQL syntax
+- **Zero Additional Management Cost**: DuckDB instances are managed, operated, and monitored exactly like regular RDS MySQL instances
+- **One-Click Deployment**: Create DuckDB read-only instances with automatic data conversion from InnoDB to DuckDB
+
+## Architecture
+
+### MySQL's Pluggable Storage Engine Architecture
+
+MySQL's pluggable storage engine architecture allows it to extend its capabilities through different storage engines:
+
+![MySQL Architecture](https://raw.githubusercontent.com/baotiao/bb/main/uPic/0f4ea5d6-b3ff-45b8-bdeb-60f03b56fe1e.png)
+
+The architecture consists of four main layers:
+- **Runtime Layer**: Handles MySQL runtime tasks like communication, access control, system configuration, and monitoring
+- **Binlog Layer**: Manages binlog generation, replication, and application
+- **SQL Layer**: Handles SQL parsing, optimization, and execution
+- **Storage Engine Layer**: Manages data storage and access
+
+### DuckDB Read-Only Instance Architecture
+
+![DuckDB Architecture](https://raw.githubusercontent.com/baotiao/bb/main/uPic/a5005f18-fb41-46c5-8d11-328b4182766f.png)
+
+DuckDB analytical read-only instances use a read-write separation architecture:
+- Analytical workloads are separated from the main instance, ensuring no mutual impact
+- Data replication from the main instance via binlog mechanism (similar to regular read replicas)
+- InnoDB stores only metadata and system information (accounts, configurations)
+- All user data resides in the DuckDB engine
+
+## Implementation Details
+
+### Query Path
+
+![Query Path](https://raw.githubusercontent.com/baotiao/bb/main/uPic/ccb31673-c5cc-429d-b8bc-e432e50a7737.png)
+
+1. Users connect via MySQL client
+2. MySQL parses the query and performs necessary processing
+3. SQL is sent to DuckDB engine for execution
+4. DuckDB returns results to server layer
+5. Server layer converts results to MySQL format and returns to client
+
+**Compatibility**:
+- Extended DuckDB's syntax parser to support MySQL-specific syntax
+- Rewrote numerous DuckDB functions and added many MySQL functions
+- Automated compatibility testing platform with ~170,000 SQL tests shows **99% compatibility rate**
+
+### Binlog Replication Path
+
+![Binlog Replication](https://raw.githubusercontent.com/baotiao/bb/main/uPic/79d99d71-1e2b-419d-977a-94d10faea090.png)
+
+Key features:
+
+**Idempotent Replay**:
+- Since DuckDB doesn't support two-phase commit, custom transaction commit and binlog replay processes ensure data consistency after instance crashes
+
+**DML Replay Optimization**:
+- DuckDB favors large transactions; frequent small transactions cause severe replication lag
+- Implemented batch replay mechanism achieving **30K rows/s** replay capability
+- In Sysbench testing, achieves zero replication lag, even higher than InnoDB replay performance
+
+**Parallel Copy DDL**:
+- For DDL operations DuckDB doesn't natively support (e.g., column reordering), implemented Copy DDL mechanism
+- Natively supported DDL uses Inplace/Instant execution
+- Copy DDL creates a new table to replace the original using multi-threaded parallel execution
+- Execution time reduced by **7x**
+
+![Copy DDL Performance](https://raw.githubusercontent.com/baotiao/bb/main/uPic/5ddc14f2-9b8a-4a00-a346-bace639009e5.png)
+
+## Performance Benchmarks
+
+**Test Environment**:
+- ECS Instance: 32 CPU, 128GB Memory, ESSD PL1 Cloud Disk 500GB
+- Benchmark: TPC-H SF100
+
+![Performance Comparison](https://raw.githubusercontent.com/baotiao/bb/main/uPic/f844ff93-34d5-4971-89f7-684bea81a001.png)
+
+DuckDB demonstrates significant performance advantages over InnoDB in analytical query scenarios, with up to **200x improvement**.
+
+## Getting Started
+
+### Building AliSQL with DuckDB Engine
+
+**Prerequisites**:
+- [CMake](https://cmake.org) 3.x or higher
+- Python3
+- C++11 compliant compiler (GCC 5.x+ or Clang 3.4+)
+
+**Build Instructions**:
+
+```bash
+# Clone the repository
+git clone https://github.com/your-repo/myduck.git
+cd myduck
+
+# Build the project
+make
+
+# For development/debugging
+make debug
+
+# Run unit tests
+make unit
+make allunit
+
+# Build with benchmarks (optional)
+BUILD_BENCHMARK=1 BUILD_TPCH=1 make
 ```
 
-Refer to our [Data Import](https://duckdb.org/docs/stable/data/overview) section for more information.
+### Using DuckDB Engine in MySQL
+
+Once built, you can create tables using the DuckDB storage engine:
+
+```sql
+-- Create a table with DuckDB engine
+CREATE TABLE analytics_table (
+    id INT,
+    name VARCHAR(100),
+    value DECIMAL(10,2)
+) ENGINE=DuckDB;
+
+-- Import data from Parquet files
+LOAD DATA INFILE '/path/to/data.parquet' INTO TABLE analytics_table;
+
+-- Run analytical queries
+SELECT name, SUM(value) as total
+FROM analytics_table
+GROUP BY name
+ORDER BY total DESC;
+```
+
+### Configuration
+
+Key MySQL parameters for DuckDB engine:
+- Configure DuckDB-specific settings through MySQL system variables
+- Refer to the documentation for tuning parameters based on your workload
+
+## Try It on Alibaba Cloud
+
+You can experience RDS MySQL with DuckDB engine on Alibaba Cloud:
+
+https://help.aliyun.com/zh/rds/apsaradb-rds-for-mysql/duckdb-based-analytical-instance/
+
+## Resources
+
+- [DuckDB Official Documentation](https://duckdb.org/docs/stable/)
+- [DuckDB GitHub Repository](https://github.com/duckdb/duckdb)
+- [MySQL 8.0 Documentation](https://dev.mysql.com/doc/refman/8.0/en/)
+- [Detailed Article (Chinese)](https://mp.weixin.qq.com/s/_YmlV3vPc9CksumXvXWBEw)
 
 ## SQL Reference
 
@@ -42,10 +184,10 @@ The documentation contains a [SQL introduction and reference](https://duckdb.org
 
 ## Development
 
-For development, DuckDB requires [CMake](https://cmake.org), Python3 and a `C++11` compliant compiler. Run `make` in the root directory to compile the sources. For development, use `make debug` to build a non-optimized debug version. You should run `make unit` and `make allunit` to verify that your version works properly after making changes. To test performance, you can run `BUILD_BENCHMARK=1 BUILD_TPCH=1 make` and then perform several standard benchmarks from the root directory by executing `./build/release/benchmark/benchmark_runner`. The details of benchmarks are in our [Benchmark Guide](benchmark/README.md).
+Please refer to the [DuckDB Build Guide](https://duckdb.org/docs/stable/dev/building/overview) for detailed build instructions.
 
-Please also refer to our [Build Guide](https://duckdb.org/docs/stable/dev/building/overview) and [Contribution Guide](CONTRIBUTING.md).
+The benchmark details are available in the [Benchmark Guide](benchmark/README.md).
 
 ## Support
 
-See the [Support Options](https://duckdblabs.com/support/) page.
+For DuckDB-specific support, see the [Support Options](https://duckdblabs.com/support/) page.
